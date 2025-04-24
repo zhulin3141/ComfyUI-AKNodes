@@ -6,6 +6,7 @@ import logging
 
 # https://github.com/cubiq/ComfyUI_essentials/blob/main/sampling.py
 
+MAX_SEED_NUM = 1125899906842624
 class FluxSimpleSamplerParams:
     def __init__(self):
         self.loraloader = None
@@ -18,14 +19,14 @@ class FluxSimpleSamplerParams:
                     "conditioning": ("CONDITIONING", ),
                     "latent_image": ("LATENT", ),
 
-                    "seed": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "?" }),
-                    "sampler": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "euler" }),
-                    "scheduler": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "simple" }),
-                    "steps": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "20" }),
-                    "guidance": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "3.5" }),
-                    "max_shift": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "" }),
-                    "base_shift": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "" }),
-                    "denoise": ("STRING", { "multiline": False, "dynamicPrompts": False, "default": "1.0" }),
+                    "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+                    "sampler": (comfy.samplers.KSampler.SAMPLERS, {"default": "euler"}),
+                    "scheduler": (comfy.samplers.KSampler.SCHEDULERS, {"default": "simple" }),
+                    "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                    "guidance": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1}),
+                    "max_shift": ("FLOAT", {"default": 1.15, "min": 0.0, "max": 100.0, "step": 0.01}),
+                    "base_shift": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 100.0, "step": 0.01}),
+                    "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
                 },
                 "optional": {
                     "loras": ("LORA_PARAMS",),
@@ -34,7 +35,7 @@ class FluxSimpleSamplerParams:
     RETURN_TYPES = ("LATENT","SAMPLER_PARAMS")
     RETURN_NAMES = ("latent", "params")
     FUNCTION = "execute"
-    CATEGORY = "Uni/sampling"
+    CATEGORY = "AKNodes/sampling"
 
     def execute(self, model, conditioning, latent_image, seed, sampler, scheduler, steps, guidance, max_shift, base_shift, denoise, loras=None):
         import random
@@ -47,49 +48,25 @@ class FluxSimpleSamplerParams:
 
         is_schnell = model.model.model_type == comfy.model_base.ModelType.FLOW
 
+        seed = str(seed)
         noise = seed.replace("\n", ",").split(",")
         noise = [random.randint(0, 999999) if "?" in n else int(n) for n in noise]
+        sampler = [sampler]
+        scheduler = [scheduler]
         if not noise:
             noise = [random.randint(0, 999999)]
 
-        if sampler == '*':
-            sampler = comfy.samplers.KSampler.SAMPLERS
-        elif sampler.startswith("!"):
-            sampler = sampler.replace("\n", ",").split(",")
-            sampler = [s.strip("! ") for s in sampler]
-            sampler = [s for s in comfy.samplers.KSampler.SAMPLERS if s not in sampler]
-        else:
-            sampler = sampler.replace("\n", ",").split(",")
-            sampler = [s.strip() for s in sampler if s.strip() in comfy.samplers.KSampler.SAMPLERS]
-        if not sampler:
-            sampler = ['ipndm']
-
-        if scheduler == '*':
-            scheduler = comfy.samplers.KSampler.SCHEDULERS
-        elif scheduler.startswith("!"):
-            scheduler = scheduler.replace("\n", ",").split(",")
-            scheduler = [s.strip("! ") for s in scheduler]
-            scheduler = [s for s in comfy.samplers.KSampler.SCHEDULERS if s not in scheduler]
-        else:
-            scheduler = scheduler.replace("\n", ",").split(",")
-            scheduler = [s.strip() for s in scheduler]
-            scheduler = [s for s in scheduler if s in comfy.samplers.KSampler.SCHEDULERS]
-        if not scheduler:
-            scheduler = ['simple']
-
-        if steps == "":
-            if is_schnell:
-                steps = "4"
-            else:
-                steps = "20"
+        steps = str(steps)
         steps = parse_string_to_list(steps)
 
-        denoise = "1.0" if denoise == "" else denoise
+        denoise = str(denoise)
         denoise = parse_string_to_list(denoise)
 
-        guidance = "3.5" if guidance == "" else guidance
+        guidance = str(guidance)
         guidance = parse_string_to_list(guidance)
 
+        base_shift = str(base_shift)
+        max_shift = str(max_shift)
         if not is_schnell:
             max_shift = "1.15" if max_shift == "" else max_shift
             base_shift = "0.5" if base_shift == "" else base_shift
