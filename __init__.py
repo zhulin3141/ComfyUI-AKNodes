@@ -6,7 +6,7 @@ import logging
 
 # https://github.com/cubiq/ComfyUI_essentials/blob/main/sampling.py
 
-MAX_SEED_NUM = 1125899906842624
+
 class FluxSimpleSamplerParams:
     def __init__(self):
         self.loraloader = None
@@ -48,9 +48,8 @@ class FluxSimpleSamplerParams:
 
         is_schnell = model.model.model_type == comfy.model_base.ModelType.FLOW
 
+        noise = [random.randint(0, 999999) if -1 == seed else int(seed)]
         seed = str(seed)
-        noise = seed.replace("\n", ",").split(",")
-        noise = [random.randint(0, 999999) if "?" in n else int(n) for n in noise]
         sampler = [sampler]
         scheduler = [scheduler]
         if not noise:
