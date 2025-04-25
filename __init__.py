@@ -4,6 +4,12 @@ from comfy.utils import ProgressBar
 from .utils import expand_mask, FONTS_DIR, parse_string_to_list
 import logging
 import folder_paths
+import latent_preview
+import torch
+from comfy_extras.nodes_custom_sampler import Noise_RandomNoise, BasicScheduler, BasicGuider, SamplerCustomAdvanced
+from comfy_extras.nodes_model_advanced import ModelSamplingFlux, ModelSamplingAuraFlow
+from nodes import VAEDecode, VAEDecodeTiled
+from node_helpers import conditioning_set_values
 
 # https://github.com/cubiq/ComfyUI_essentials/blob/main/sampling.py
 
@@ -41,10 +47,7 @@ class FluxSimpleSamplerParams:
     def execute(self, model, conditioning, latent_image, seed, sampler, scheduler, steps, guidance, max_shift, base_shift, denoise, loras=None):
         import random
         import time
-        from comfy_extras.nodes_custom_sampler import Noise_RandomNoise, BasicScheduler, BasicGuider, SamplerCustomAdvanced
         from comfy_extras.nodes_latent import LatentBatch
-        from comfy_extras.nodes_model_advanced import ModelSamplingFlux, ModelSamplingAuraFlow
-        from node_helpers import conditioning_set_values
         from nodes import LoraLoader
 
         is_schnell = model.model.model_type == comfy.model_base.ModelType.FLOW
@@ -257,13 +260,95 @@ class StyleModelApplyHelper:
 
         return (c_out,)
 
+class FluxSampler:
+    @classmethod
+    def INPUT_TYPES(s):
+        return {"required":
+                    {"noise_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True,}),
+                    "model": ("MODEL",),
+                    "conditioning": ("CONDITIONING", ),
+                    "sampler_name": (comfy.samplers.SAMPLER_NAMES, ),
+                    "latent_image": ("LATENT", ),
+                    "scheduler": (comfy.samplers.SCHEDULER_NAMES, ),
+                    "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
+                    "guidance": ("FLOAT", {"default": 3.5, "min": 0.0, "max": 100.0, "step": 0.1}),
+                    "max_shift": ("FLOAT", {"default": 1.15, "min": 0.0, "max": 100.0, "step": 0.01}),
+                    "base_shift": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 100.0, "step": 0.01}),
+                    "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
+                    }
+                }
+
+    RETURN_TYPES = ("LATENT","LATENT")
+    RETURN_NAMES = ("output", "denoised_output")
+
+    FUNCTION = "execute"
+
+    CATEGORY = "AKNodes/sampling"
+
+    def execute(self, noise_seed, model, conditioning, sampler_name, latent_image, scheduler, steps, guidance, max_shift, base_shift, denoise):
+        is_schnell = model.model.model_type == comfy.model_base.ModelType.FLOW
+        noise = Noise_RandomNoise(noise_seed)
+        
+        modelsamplingflux = ModelSamplingFlux() if not is_schnell else ModelSamplingAuraFlow()
+        width = latent_image["samples"].shape[3]*8
+        height = latent_image["samples"].shape[2]*8
+
+        if is_schnell:
+            work_model = modelsamplingflux.patch_aura(model, base_shift)[0]
+        else:
+            work_model = modelsamplingflux.patch(model, max_shift, base_shift, width, height)[0]
+
+        cond = conditioning_set_values(conditioning, {"guidance": guidance})
+
+        basicguider = BasicGuider()
+        guider = basicguider.get_guider(work_model, cond)[0]
+
+        sampler = comfy.samplers.sampler_object(sampler_name)
+
+        total_steps = steps
+        if denoise < 1.0:
+            if denoise <= 0.0:
+                return (torch.FloatTensor([]),)
+            total_steps = int(steps/denoise)
+
+        sigmas = comfy.samplers.calculate_sigmas(work_model.get_model_object("model_sampling"), scheduler, total_steps).cpu()
+        sigmas = sigmas[-(steps + 1):]
+
+        latent = latent_image
+        latent_image = latent["samples"]
+        latent = latent.copy()
+        latent_image = comfy.sample.fix_empty_latent_channels(guider.model_patcher, latent_image)
+        latent["samples"] = latent_image
+
+        noise_mask = None
+        if "noise_mask" in latent:
+            noise_mask = latent["noise_mask"]
+
+        x0_output = {}
+        callback = latent_preview.prepare_callback(guider.model_patcher, sigmas.shape[-1] - 1, x0_output)
+
+        disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
+        samples = guider.sample(noise.generate_noise(latent), latent_image, sampler, sigmas, denoise_mask=noise_mask, callback=callback, disable_pbar=disable_pbar, seed=noise.seed)
+        samples = samples.to(comfy.model_management.intermediate_device())
+
+        out = latent.copy()
+        out["samples"] = samples
+        if "x0" in x0_output:
+            out_denoised = latent.copy()
+            out_denoised["samples"] = guider.model_patcher.model.process_latent_out(x0_output["x0"].cpu())
+        else:
+            out_denoised = out
+        return (out, out_denoised)
+
 NODE_CLASS_MAPPINGS = {
-    "FluxSimpleSamplerParams": FluxSimpleSamplerParams,
-     "StyleModelEfficiency": StyleModelApplyHelper,
+    # "FluxSimpleSamplerParams": FluxSimpleSamplerParams,
+    "FluxSampler": FluxSampler,
+    "StyleModelEfficiency": StyleModelApplyHelper,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "FluxSimpleSamplerParams": "Flux简单采样",
+    # "FluxSimpleSamplerParams": "Flux简单采样",
+    "FluxSampler": "Flux简易采样器",
     "StyleModelEfficiency": "风格模型应用助手"
 }
 
