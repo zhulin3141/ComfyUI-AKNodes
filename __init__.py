@@ -8,7 +8,7 @@ import latent_preview
 import torch
 from comfy_extras.nodes_custom_sampler import Noise_RandomNoise, BasicScheduler, BasicGuider, SamplerCustomAdvanced
 from comfy_extras.nodes_model_advanced import ModelSamplingFlux, ModelSamplingAuraFlow
-from nodes import VAEDecode, VAEDecodeTiled
+from nodes import MAX_RESOLUTION
 from node_helpers import conditioning_set_values
 
 # https://github.com/cubiq/ComfyUI_essentials/blob/main/sampling.py
@@ -340,17 +340,66 @@ class FluxSampler:
             out_denoised = out
         return (out, out_denoised)
 
+class EmptyLatentFromImageDimensions:
+    def __init__(self):
+        self.device = comfy.model_management.intermediate_device()
+
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "resolution": (["704x1408 (0.5)","704x1344 (0.52)","768x1344 (0.57)","768x1280 (0.6)","832x1216 (0.68)","832x1152 (0.72)","896x1152 (0.78)","896x1088 (0.82)","960x1088 (0.88)","960x1024 (0.94)","1024x1024 (1.0)","1024x960 (1.07)","1088x960 (1.13)","1088x896 (1.21)","1152x896 (1.29)","1152x832 (1.38)","1216x832 (1.46)","1280x768 (1.67)","1344x768 (1.75)","1344x704 (1.91)","1408x704 (2.0)","1472x704 (2.09)","1536x640 (2.4)","1600x640 (2.5)","1664x576 (2.89)","1728x576 (3.0)",], {"default": "1024x1024 (1.0)"}),
+                "batch_size": ("INT", {"default": 1, "min": 1, "max": 4096}),
+                "width_override": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 8}),
+                "height_override": ("INT", {"default": 0, "min": 0, "max": MAX_RESOLUTION, "step": 8}),
+            },
+            "optional": {
+                "image": ("IMAGE",),
+            }
+        }
+
+    RETURN_TYPES = ("LATENT","INT","INT",)
+    RETURN_NAMES = ("LATENT","width","height",)
+    FUNCTION = "execute"
+    CATEGORY = "AKNodes/Latent"
+    DESCRIPTION = """
+根据图片尺寸创建Latent,返回Latent和宽高
+
+    """
+
+    def execute(self, resolution, batch_size, width_override=0, height_override=0, image=None):
+        if( image is not None):
+            _, raw_H, raw_W, _ = image.shape
+
+            width = raw_W
+            height = raw_H
+        else:
+            width, height = resolution.split(" ")[0].split("x")
+            width = width_override if width_override > 0 else int(width)
+            height = height_override if height_override > 0 else int(height)
+
+        latent = torch.zeros([batch_size, 4, height // 8, width // 8], device=self.device)
+
+        return {"ui": {
+            "text": [f"{width}x{height}"]}, 
+            "result": ({"samples":latent}, width, height,)
+        }
+
 NODE_CLASS_MAPPINGS = {
     # "FluxSimpleSamplerParams": FluxSimpleSamplerParams,
     "FluxSampler": FluxSampler,
     "StyleModelEfficiency": StyleModelApplyHelper,
+    "EmptyLatentFromImageDimensions": EmptyLatentFromImageDimensions,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     # "FluxSimpleSamplerParams": "Flux简单采样",
     "FluxSampler": "Flux简易采样器",
-    "StyleModelEfficiency": "风格模型应用助手"
+    "StyleModelEfficiency": "风格模型应用助手",
+    "EmptyLatentFromImageDimensions": "从图片大小创建Latent",
 }
 
 
-__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS"]
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
+
+WEB_DIRECTORY = "./js"
