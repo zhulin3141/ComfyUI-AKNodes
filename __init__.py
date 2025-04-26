@@ -347,13 +347,13 @@ class FluxSamplerWithGuider:
             "required":{
                 "noise_seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True,}),                 
                 "sampler_name": (comfy.samplers.SAMPLER_NAMES, ),
+                "guider": ("GUIDER", ),
                 "latent_image": ("LATENT", ),
                 "scheduler": (comfy.samplers.SCHEDULER_NAMES, ),
                 "steps": ("INT", {"default": 20, "min": 1, "max": 10000}),
                 "max_shift": ("FLOAT", {"default": 1.15, "min": 0.0, "max": 100.0, "step": 0.01}),
                 "base_shift": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 100.0, "step": 0.01}),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
-                "guider": ("GUIDER", ),
             },
         }
 
